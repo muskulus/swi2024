@@ -1,11 +1,19 @@
 # evolution.py - Probability density evolution 
-# ver 1.0 - 2024-02-13 - michael.muskulus@ntnu.no
+# ver 1.1 - 2024-02-15 - michael.muskulus@ntnu.no
+
+# CHANGELOG
+#
+# 2024-02-15
+# - Added search for changes in optimal stock when varying alpha
+# - Examples numbered according to proceedings
+# - New function optimize_and_compare to avoid repetition
+# - Improved textual outputs slightly
 
 import numpy as np
-from scipy.stats import poisson, nbinom
 import matplotlib.pyplot as plt
 import queue
 import matplotlib.animation as animation
+from scipy.stats import poisson, nbinom
 import scipy.stats.contingency as ssc
 
 #
@@ -415,6 +423,9 @@ def theoretical_q(customers, costs, prices, minp=1e-9, verbose=False):
                         print("    Increase demand for item ",k," with intensity",mu*fi[i])
                     mu_eff[k] = mu_eff[k] + mu*fi[i]
     q = poisson.ppf(f,mu_eff)
+    # b = 0.99
+    # N = mu_eff*b/(1-b)
+    # q = nbinom.ppf(f,N,b)
     q[q < 0] = 0
     q = np.round(q)  # NB: is rounding the best strategy?
     q = q.astype(int)
@@ -432,8 +443,9 @@ def theoretical_q(customers, costs, prices, minp=1e-9, verbose=False):
 # Step-up stocks until no more improvement
 # Keep a queue of unexplored possibilities
 # Stop when no improvement can be reached anymore
-def optimize_full(q0,qmax,customers,costs,prices,depth=2,verbose=False):
-    print("Fully enumerative optimization",end="")
+def optimize_full(q0,qmax,customers,costs,prices,depth=2,quiet=False,verbose=False):
+    if not quiet:
+        print("Fully enumerative optimization",end="")
     NOT_VISITED = -99999
     def obj(q,penalize_lost=False,penalize_item=1,level=0.01,penalty=10000):        
         qi, usc, lostsales = evolve_correlated(q,customers)
@@ -454,7 +466,8 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,verbose=False):
                 if verbose:
                     print("%s -- %12.10f -- PUSHED" % (q, new))
                 candidates.put(np.copy(q))
-                print(".",end="")
+                if not quiet:
+                    print(".",end="")
             else:
                 if verbose:
                     print("%s -- %12.10f -- <" % (q, new))   
@@ -475,7 +488,8 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,verbose=False):
     vals[*q0] = best
     # enter new candidates into queue
     add_from(q0,depth)    
-    print("\n%s -- %12.10f -- initial solution" % (qbest, best), end="")
+    if not quiet:
+        print("\n%s -- %12.10f -- initial solution" % (qbest, best), end="")
     while not candidates.empty():
         q = candidates.get()
         step = step + 1
@@ -486,17 +500,36 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,verbose=False):
         if current > best:
             best = current
             qbest = np.copy(q)
-            print("\n%s -- %12.10f -- new best solution" % (qbest, best),end="")
+            if not quiet:
+                print("\n%s -- %12.10f -- new best solution" % (qbest, best),end="")
         # now try to find new candidates to explore from this one
         add_from(q,depth)
-    print("\nFinished... no. evaluations = %d" % step)
+    if not quiet:
+        print("\nFinished... no. evaluations = %d" % step)
     return(qbest)
 
 #
 # Some example scenarios
 #
 
-def example1(plot=True,save=False):
+def optimize_and_compare(customers,costs,prices):
+    print("")
+    print("*** Theoretical solution for independent stocks ***")
+    qt = theoretical_q(customers,costs,prices)
+    qi, usc, lostsales = evolve_correlated(qt,customers)
+    analyze(qi,usc,lostsales,qt,costs,prices)
+    # Let's try to optimize
+    q0 = np.array([0,0])        # initial stock levels to consider
+    qmax = np.array([100,100])  # max. stock levels to consider
+    print("")
+    qbest = optimize_full(q0,qmax,customers,costs,prices)
+    qi, usc,lostsales = evolve_correlated(qbest,customers)
+    print("")
+    print("*** Optimal solution from search ***")
+    analyze(qi,usc,lostsales,qbest,costs,prices)
+    return qi    
+
+def example4(plot=True,save=False):
     # Single item customer / independent case
     print("Example 1")
     print("Results for simple customer")
@@ -505,6 +538,8 @@ def example1(plot=True,save=False):
     customers = []
     rate = 20
     fi = np.array([2/3, 1/3])
+    # fi = np.array([1/2, 1/2])
+    
     #customers.append(customerSimple(rate,dPoisson(mu=rate),fi))
     customers.append(customerSimple(rate,dNBinom(mu=rate),fi))
     dmax  = [29,29]  # initial guess of customer demand
@@ -538,9 +573,22 @@ def example1(plot=True,save=False):
         if save:
             plt.savefig('fig1-1.png', bbox_inches='tight', dpi=300)
 
-def example2(plot=True,save=False):
+def example5(plot=True,save=False):
     # Single item customer / independent case
-    print("Example 2")
+    print("Example 5")
+    print("Results for simple customer")
+    costs  = np.array([6,10])
+    prices = np.array([10,13])
+    customers = []
+    rate = 20
+    fi = np.array([2/3, 1/3])
+    customers.append(customerSimple(rate,dNBinom(mu=rate),fi))
+    qi = optimize_and_compare(customers,costs,prices)
+    return qi
+
+def example5_plot(plot=True,save=False):
+    # Single item customer / independent case
+    print("Example 5")
     print("Results for simple customer")
     print("")
     costs  = np.array([6,10])
@@ -551,14 +599,16 @@ def example2(plot=True,save=False):
     customers.append(customerSimple(rate,dNBinom(mu=rate),fi))
     # customers.append(customerSimple(rate,dPoisson(mu=rate),fi))
 
+    q0 = np.array([10,5])  # initial stock levels
     if plot:
-        print("Plotting the final stock distribution")
-        q0 = np.array([10,5])  # initial stock levels
+        print("Plotting the case with q0 =" % q0)
         qi,usc,lostsales = evolve_correlated(q0,customers)  
         analyze(qi, usc, lostsales, q0, costs, prices)
 
+        qi1 = np.zeros((14,6))  # embed in larger array
+        qi1[0:11,0:6] = qi 
         plt.figure()
-        plt.matshow(qi,origin="lower")
+        plt.matshow(qi1,origin="lower")
         plt.set_cmap('jet')
         plt.colorbar()
         plt.clim(0,0.2)
@@ -575,15 +625,24 @@ def example2(plot=True,save=False):
     print("")
     print("*** Optimal solution from search ***")
     analyze(qi,usc,lostsales,qbest,costs,prices)
+    if plot:
+        print("\nPlotting the optimal case q* =" % qbest)
+        plt.figure()
+        plt.matshow(qi,origin="lower")
+        plt.set_cmap('jet')
+        plt.colorbar()
+        plt.clim(0,0.2)
+        plt.title("q0=%s" % qbest)
+        if save:
+            plt.savefig('fig2-2.png', bbox_inches='tight', dpi=300)
 
     print("")
     print("*** Theoretical solution for independent stocks ***")
     qt = theoretical_q(customers,costs,prices)
     qi, usc, lostsales = evolve_correlated(qt,customers)
     analyze(qi,usc,lostsales,qt,costs,prices)
-
     if plot:
-        print("\nPlotting the final stock distribution")
+        print("\nPlotting the independent case q0 ="% qt)
         plt.figure()
         plt.matshow(qi,origin="lower")
         plt.set_cmap('jet')
@@ -591,15 +650,15 @@ def example2(plot=True,save=False):
         plt.clim(0,0.2)
         plt.title("q0=%s" % qt)
         if save:
-            plt.savefig('fig2-2.png', bbox_inches='tight', dpi=300)
+            plt.savefig('fig2-3.png', bbox_inches='tight', dpi=300)
 
     return qi
 
-def example3():
-    # Single item customer with switching probability
-    print("Example 3")
+def example6(alpha=1.0):
+    # Single item customer with switching probability alpha
+    print("Example 6")
     print("Results for simple customer with switching (strict)")
-    print("")
+    print("alpha = %6.4f" % alpha)
     nx = 2
     costs  = np.array([6,10])
     prices = np.array([10,13])
@@ -607,106 +666,200 @@ def example3():
     rate = 20
     fi = np.array([2/3, 1/3])
     aij = np.zeros((nx,nx))
-    aij[0,1] = 1.  # Strict switching policy 
-    aij[1,0] = 1.
+    assert(alpha <= 1.0 and alpha >= 0.0)
+    aij[0,1] = alpha
+    aij[1,0] = alpha
     for i in range(nx):
         aij[i,i] = 1 - np.sum(aij[i,:])  # probability of not switching
     customers.append(customerFlexible(rate,dNBinom(mu=rate),fi,aij))
-
-    # Let's try to optimize
-    q0 = np.array([0,0])        # initial stock levels to consider
-    qmax = np.array([100,100])  # max. stock levels to consider   
-    qbest = optimize_full(q0,qmax,customers,costs,prices)
-    qi, usc,lostsales = evolve_correlated(qbest,customers)
-    print("")
-    print("*** Optimal solution from search ***")
-    analyze(qi, usc, lostsales, qbest,costs,prices)
-
-    print("")
-    print("*** Theoretical solution for independent stocks ***")
-    qt = theoretical_q(customers,costs,prices,verbose=False)
-    qi, usc, lostsales = evolve_correlated(qt,customers,verbose=False)
-    analyze(qi,usc,lostsales,qt,costs,prices,verbose=True)
-
+    qi = optimize_and_compare(customers,costs,prices)
     return qi
 
-def example4():
+def example6_plot(save=False):
     # Single item customer with switching probability
-    print("Example 4")
-    print("Results for simple customer with switching (partial)")
+    def aijmatrix(r):
+        aij = np.zeros((nx,nx))
+        aij[0,1] = r 
+        aij[1,0] = r
+        for i in range(nx):
+            aij[i,i] = 1 - np.sum(aij[i,:])  # probability of not switching
+        return aij
+    print("Example 6_plot")
+    print("Results for simple customer with switching")
+    print("Varying the switching probability")
     print("")
     nx = 2
     costs  = np.array([6,10])
     prices = np.array([10,13])
-    customers = []
     rate = 20
     fi = np.array([2/3, 1/3])
-    aij = np.zeros((nx,nx))
-    aij[0,1] = 0.5  # Strict switching policy 
-    aij[1,0] = 0.5
-    for i in range(nx):
-        aij[i,i] = 1 - np.sum(aij[i,:])  # probability of not switching
-    customers.append(customerFlexible(rate,dNBinom(mu=rate),fi,aij))
+    
+    # rs = np.linspace(0,1,11)
+    rs = np.linspace(0,1,101)
+    value = np.zeros_like(rs)
+    qs = []
+    for i, r in enumerate(rs):
+        assert(i == len(qs))
+        print(i,": Results for r = %12.10f" % r,end="")
+        customers = []
+        customers.append(customerFlexible(rate,dNBinom(mu=rate),fi,aijmatrix(r)))
+        # Let's try to optimize
+        q0 = np.array([0,0])        # initial stock levels to consider
+        qmax = np.array([100,100])  # max. stock levels to consider   
+        qbest = optimize_full(q0,qmax,customers,costs,prices,quiet=True)
+        qi, usc,lostsales = evolve_correlated(qbest,customers)
+        esv = analyze(qi, usc, lostsales, qbest,costs,prices,verbose=False)
+        value[i] = esv
+        qs.append(qbest)
+        print("  =>  q* =",qbest," value = %6.3f" % esv)
+    
+    plt.figure()
+    plt.title("Optimal revenue")
+    plt.plot(rs,value,'-b')
+    plt.plot(rs,value,'ko')
+    plt.xlabel("Switching probability")
+    plt.ylabel("Expectation")
+    if save:
+        plt.savefig('fig4x-1.png', bbox_inches='tight', dpi=300)
+    
+    plt.figure()
+    plt.title("Optimal stock levels")
+    for q in qs:
+        plt.plot(q[0],q[1],'ko')
+    plt.xlabel("# Item 1")
+    plt.ylabel("# Item 2")
+    if save:
+        plt.savefig('fig4x-2.png', bbox_inches='tight', dpi=300)
 
-    # Let's try to optimize
-    q0 = np.array([0,0])        # initial stock levels to consider
-    qmax = np.array([100,100])  # max. stock levels to consider   
-    qbest = optimize_full(q0,qmax,customers,costs,prices)
-    qi, usc,lostsales = evolve_correlated(qbest,customers)
-    print("")
-    print("*** Optimal solution from search ***")
-    analyze(qi, usc, lostsales, qbest,costs,prices)
+    return rs, qs, value
 
-    print("")
-    print("*** Theoretical solution for independent stocks ***")
-    qt = theoretical_q(customers,costs,prices,verbose=False)
-    qi, usc, lostsales = evolve_correlated(qt,customers,verbose=False)
-    analyze(qi,usc,lostsales,qt,costs,prices,verbose=True)
-
-    return qi
-
-def example5(depth=2):
-    # Correlated customer
-    print("Example 5")
-    print("Results for correlated customer (must buy both items)")
+def example6_search(dr=0.1,rtol=1e-8,r1=0.0,r2=1.0,save=False):
+    # Single item customer with switching probability
+    # Find the values of alpha where the optimum changes
+    # dr: Minimum increase in r when searching for next change
+    # r1, r2: Search region between r1 and r2
+    def aijmatrix(r):
+        aij = np.zeros((nx,nx))
+        aij[0,1] = r 
+        aij[1,0] = r
+        for i in range(nx):
+            aij[i,i] = 1 - np.sum(aij[i,:])  # probability of not switching
+        return aij
+    def evaluate(r,quiet=False):
+        if not quiet:
+            print("  r = %12.10f" % r,end="")
+        customers = []
+        customers.append(customerFlexible(rate,dNBinom(mu=rate),fi,aijmatrix(r)))
+        q0 = np.array([0,0])        # initial stock levels to consider
+        qmax = np.array([100,100])  # max. stock levels to consider   
+        qbest = optimize_full(q0,qmax,customers,costs,prices,quiet=True)
+        qi, usc,lostsales = evolve_correlated(qbest,customers)
+        esv = analyze(qi, usc, lostsales, qbest,costs,prices,verbose=False)
+        if not quiet:
+            print("  =>  q =",qbest)
+        return esv, qbest
+    def bisect(r1,r2,qlast):
+        # Find r between r1 and r2 where q changes
+        print("  Bisecting...")
+        r = (r1+r2)/2
+        while r2-r1 > rtol:
+            r = (r1+r2)/2
+            v, q = evaluate(r,quiet=True)
+            print("    r1= %12.10f -- r= %12.10f -- r2= %12.10f" % (r1, r, r2), "  =>  q =",q)
+            if np.all(q == qlast):
+                r1 = r 
+                continue
+            r2 = r 
+        return r
+    print("Example 6_search")
+    print("Results for simple customer with switching")
+    print("Varying the switching probability")
     print("")
     nx = 2
     costs  = np.array([6,10])
     prices = np.array([10,13])
-    customers = []
     rate = 20
+    fi = np.array([2/3, 1/3])
+    r = r1
+    rs = [r]
+    v, q = evaluate(r)
+    value = [v]
+    qs = [q]
+    qlast = np.copy(q)
+    rlast = r
+    while r < r2:
+        r = r + dr
+        if r > r2:
+            r = r2
+        v, q = evaluate(r)
+        if np.all(q == qlast):
+            rlast = r 
+            if np.isclose(r, r2):
+                break
+            continue  # need to search farther away
+        r = bisect(rlast,r,qlast)  # find the value of r where there is a change
+        # store results
+        v, q = evaluate(r)
+        if np.all(q == qlast):
+            # no change detected e.g. accuracy too low
+            rlast = r
+            continue
+        print("Change at r = %12.10f" % r,"  =>  q* =",q," value = %6.3f" % v)
+        rs.append(r)
+        value.append(v)
+        qs.append(q)
+        rlast = r
+        qlast = np.copy(q)
+    
+    plt.figure()
+    plt.title("Optimal revenue")
+    plt.plot(rs,value,'-b')
+    plt.plot(rs,value,'ko')
+    plt.xlabel("Switching probability")
+    plt.ylabel("Expectation")
+    if save:
+        plt.savefig('fig6x-1.png', bbox_inches='tight', dpi=300)
+    
+    plt.figure()
+    plt.title("Optimal stock levels")
+    for i in range(len(rs)):
+        q = qs[i]
+        r = rs[i]
+        plt.plot(q[0],q[1],'ko')
+        s = "%4.3f" % r
+        plt.annotate(s,(q[0]+0.2,q[1]))
+    plt.xlabel("# Item 1")
+    plt.ylabel("# Item 2")
+    if save:
+        plt.savefig('fig6x-2.png', bbox_inches='tight', dpi=300)
+
+    return rs, qs, value
+
+def example7(depth=2):
+    # Correlated customer
+    print("Example 7")
+    print("Results for correlated customer (must buy both items)")
+    nx = 2
+    costs  = np.array([6,10])
+    prices = np.array([10,13])
+    customers = []
+    rate = 20/2
     bi = np.zeros(nx,dtype='int')  # NB: must be integers!
     bi[0] = 1
     bi[1] = 1 
     customers.append(customerCorrelated(rate,dNBinom(mu=rate),bi))
-    
-    # Let's try to optimize
-    q0 = np.array([0,0])        # initial stock levels to consider
-    qmax = np.array([100,100])  # max. stock levels to consider   
-    qbest = optimize_full(q0,qmax,customers,costs,prices,depth=depth)
-    qi, usc,lostsales = evolve_correlated(qbest,customers)
-    print("")
-    print("*** Optimal solution from search ***")
-    analyze(qi, usc, lostsales, qbest,costs,prices)
-
-    print("")
-    print("*** Theoretical solution for independent stocks ***")
-    qt = theoretical_q(customers,costs,prices)
-    qi, usc, lostsales = evolve_correlated(qt,customers)
-    analyze(qi,usc,lostsales,qt,costs,prices)
-
+    qi = optimize_and_compare(customers,costs,prices)
     return qi
 
-def example6():
-    # Correlated customer
-    print("Example 6")
-    print("Results for correlated customer (either item 1 or both items)")
-    print("")
+def example8():
+    # General customer
+    print("Example 8")
+    print("Results for general customer (either item 1 or both items)")
     nx = 2
     costs  = np.array([6,10])
     prices = np.array([10,13])
     customers = []
-    rate = 20
+    rate = 20*2/3
     fi = np.array([0.5,0.5])
     m = len(fi)
     bij = np.zeros((nx,nx)) 
@@ -715,64 +868,38 @@ def example6():
     bij[1,0] = 1 
     aij = np.zeros([m,m])
     customers.append(customerGeneral(rate,dNBinom(mu=rate),fi,aij,bij))
-    
-    # Let's try to optimize
-    q0 = np.array([0,0])        # initial stock levels to consider
-    qmax = np.array([100,100])  # max. stock levels to consider   
-    qbest = optimize_full(q0,qmax,customers,costs,prices,depth=2)
-    qi, usc,lostsales = evolve_correlated(qbest,customers)
-    print("")
-    print("*** Optimal solution from search ***")
-    analyze(qi, usc, lostsales, qbest,costs,prices)
-
-    print("")
-    print("*** Theoretical solution for independent stocks ***")
-    qt = theoretical_q(customers,costs,prices)
-    qi, usc, lostsales = evolve_correlated(qt,customers)
-    analyze(qi,usc,lostsales,qt,costs,prices)
-
+    qi = optimize_and_compare(customers,costs,prices)
     return qi
 
-def example7():
+def example9():
     # Multiple types of customers
-    print("Example 7")
+    print("Example 9")
     print("Results for two different types of customers")
-    print("")
     nx = 2
     costs  = np.array([6,10])
     prices = np.array([10,13])
     customers = []
     
-    # add a simple customer
-    rate1 = 20
-    fi = np.array([2/3, 1/3])
-    customers.append(customerSimple(rate1,dNBinom(mu=rate1),fi))
-    # add a correlated customer, lower rate
-    rate2 = 5
-    nx = 2
-    bi = np.zeros(nx) 
+    # general customer
+    rate1 = 0.5*20*2/3
+    fi = np.array([0.5,0.5])
+    bij = np.zeros((nx,nx)) 
+    bij[0,0] = 1
+    bij[1,1] = 1 
+    bij[1,0] = 1 
+    aij = np.zeros([2,2])
+    customers.append(customerGeneral(rate1,dNBinom(mu=rate1),fi,aij,bij))
+    # add a correlated customer
+    rate = 0.5*20/2
+    bi = np.zeros(nx,dtype='int')  # NB: must be integers!
     bi[0] = 1
     bi[1] = 1 
-    customers.append(customerCorrelated(rate2,dNBinom(mu=rate2),bi))
+    customers.append(customerCorrelated(rate,dNBinom(mu=rate),bi))
           
-    # Let's try to optimize
-    q0 = np.array([0,0])        # initial stock levels to consider
-    qmax = np.array([100,100])  # max. stock levels to consider   
-    qbest = optimize_full(q0,qmax,customers,costs,prices,depth=2)
-    qi, usc,lostsales = evolve_correlated(qbest,customers)
-    print("")
-    print("*** Optimal solution from probability evolution and search ***")
-    analyze(qi, usc, lostsales, qbest,costs,prices)
-
-    print("")
-    print("*** Theoretical solution for independent stocks ***")
-    qt = theoretical_q(customers,costs,prices)
-    qi, usc, lostsales = evolve_correlated(qt,customers)
-    analyze(qi,usc,lostsales,qt,costs,prices)
-
+    qi = optimize_and_compare(customers,costs,prices)
     return qi
 
-def animation(save=False):
+def animate(save=False):
     print("Preparing plots for an animation")
     customers = []
     rate = 20
@@ -816,15 +943,17 @@ def animation(save=False):
 
 # Choose an example to run 
 
-#animation()
-#qi = example1()
-#qi = example2()
-qi = example3()
+# animate()
 #qi = example4()
 #qi = example5()
-#qi = example6()
+qi = example5_plot()
+#qi = example6(alpha=1.0)  
+#qi = example6(alpha=0.5)  
+#rs, qs, value = example6_plot()
+#rs, qs, value = example6_search(dr=0.1,rtol=1e-8)
 #qi = example7()
-
+#qi = example8()
+#qi = example9()
 
 
 
