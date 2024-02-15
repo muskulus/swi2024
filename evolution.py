@@ -1,5 +1,5 @@
 # evolution.py - Probability density evolution 
-# ver 1.1 - 2024-02-15 - michael.muskulus@ntnu.no
+# ver 1.2 - 2024-02-15 - michael.muskulus@ntnu.no
 
 # CHANGELOG
 #
@@ -8,6 +8,8 @@
 # - Examples numbered according to proceedings
 # - New function optimize_and_compare to avoid repetition
 # - Improved textual outputs slightly
+# - Increase portability by replacing unpacking with tuples
+# - Add plotting as PDFs in addition to PNGs
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -141,7 +143,7 @@ def evolve_demand(qmax,customers,maxcustomers=10000,minp=1e-9,mind=1e-12,verbose
     nx = len(qmax) 
     qi = np.zeros(qmax+1)
     q0 = np.zeros(nx,dtype='int')
-    qi[*q0]  = 1.0          
+    qi[tuple(q0)]  = 1.0
     # Consider all customer types individually
     for customer in customers:
         f = customer["f"]
@@ -167,7 +169,7 @@ def evolve_demand(qmax,customers,maxcustomers=10000,minp=1e-9,mind=1e-12,verbose
                     continue
                 q  = np.copy(it.multi_index)
                 for i in range(len(fi)):  # possible customer choices
-                    p = pe * fi[i] * qi[*q]
+                    p = pe * fi[i] * qi[tuple(q)]
                     if p < mind:
                         continue
                     d = bij[i]  # customer demands these items
@@ -176,9 +178,9 @@ def evolve_demand(qmax,customers,maxcustomers=10000,minp=1e-9,mind=1e-12,verbose
                     if not possible:  # domain too small
                         return False, qi  # just fail 
                     # push probability into the new demand
-                    qi_[*q1] = qi_[*q1] + p 
+                    qi_[tuple(q1)] = qi_[tuple(q1)] + p
                     if verbose:
-                        print("  q%s = %12.10f -- push %12.10f => q%s" % (q,qi[*q],p,q1), end='\n')    
+                        print("  q%s = %12.10f -- push %12.10f => q%s" % (q,qi[tuple(q)],p,q1), end='\n')
             # check that we do not loose / create probability
             qi = qi_
             total = np.concatenate(qi).sum()
@@ -232,16 +234,16 @@ def evolve_correlated(q0,customers,maxcustomers=10000,minp=1e-8,mind=1e-12,verbo
         # Update qi and usc
         q1 = q - items                   # Reduced stock after sale
         assert(np.all(q >= 0))           # Sale should be possible
-        qi_[*q1] = qi_[*q1] + p          # Probability for new stock level
+        qi_[tuple(q1)] = qi_[tuple(q1)] + p          # Probability for new stock level
         if verbose:
-            print("      q%s = %12.10f -- push %12.10f => q%s" % (q,qi[*q],p,q1), end='\n')    
+            print("      q%s = %12.10f -- push %12.10f => q%s" % (q,qi[tuple(q)],p,q1), end='\n')
         # Update distribution of unsatisfied customers
         usc_[:] = usc_[:] + p * usc      # No change       
     def leave(q,p,qi,qi_,usc,usc_):
         # No sale, with probability p
-        qi_[*q] = qi_[*q] + p            # Probability for same stock level
+        qi_[tuple(q)] = qi_[tuple(q)] + p            # Probability for same stock level
         if verbose:
-            print("      q%s = %12.10f -- push %12.10f => q%s (lost sale)" % (q,qi[*q],p,q), end='\n')    
+            print("      q%s = %12.10f -- push %12.10f => q%s (lost sale)" % (q,qi[tuple(q)],p,q), end='\n')
         # One more unsatisfied customer
         usc_[1:] = usc_[1:] + p * usc[:-1]
     def loosesales(p,items):
@@ -251,7 +253,7 @@ def evolve_correlated(q0,customers,maxcustomers=10000,minp=1e-8,mind=1e-12,verbo
     nx = len(q0)
     # Keep track of stock levels
     qi = np.zeros(q0+1)
-    qi[*q0]  = 1.0  # Initial stock level
+    qi[tuple(q0)]  = 1.0  # Initial stock level
     # Keep track of unsatisfied customers
     usc = np.zeros(maxcustomers) 
     usc[0] = 1.0  # All customers potentially satisfied
@@ -289,9 +291,9 @@ def evolve_correlated(q0,customers,maxcustomers=10000,minp=1e-8,mind=1e-12,verbo
                     continue
                 q  = np.copy(it.multi_index)
                 if verbose:
-                    print("  Consider q%s = %12.10f" % (q, qi[*q]))
+                    print("  Consider q%s = %12.10f" % (q, qi[tuple(q)]))
                 for i in range(len(fi)):  # All possible customer choices
-                    p = pe * fi[i] * qi[*q]
+                    p = pe * fi[i] * qi[tuple(q)]
                     if p < mind:
                         continue
                     # First choice
@@ -457,9 +459,9 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,quiet=False,verbose=Fal
         return res
     def add(q,current):
         # check if we have been here before
-        if vals[*q] <= NOT_VISITED:
+        if vals[tuple(q)] <= NOT_VISITED:
             new = obj(q)
-            vals[*q] = new
+            vals[tuple(q)] = new
             # is there a local improvement?
             if (new > current):
                 # new base for further exploration
@@ -473,7 +475,7 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,quiet=False,verbose=Fal
                     print("%s -- %12.10f -- <" % (q, new))   
     def add_from(q,depth):
         # try to find new candidates from existing element q
-        current = vals[*q]
+        current = vals[tuple(q)]
         for coord in range(len(q)):
             q[coord] = q[coord] + 1
             add(q,current)  # single step-up
@@ -485,7 +487,7 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,quiet=False,verbose=Fal
     candidates = queue.Queue()
     step = 0
     vals = np.ones(qmax)*NOT_VISITED # keeping track of values
-    vals[*q0] = best
+    vals[tuple(q0)] = best
     # enter new candidates into queue
     add_from(q0,depth)    
     if not quiet:
@@ -494,7 +496,7 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,quiet=False,verbose=Fal
         q = candidates.get()
         step = step + 1
         # should already have a value
-        current = vals[*q]
+        current = vals[tuple(q)]
         assert(current > NOT_VISITED)
         # but is there a global improvement?
         if current > best:
@@ -531,7 +533,7 @@ def optimize_and_compare(customers,costs,prices):
 
 def example4(plot=True,save=False):
     # Single item customer / independent case
-    print("Example 1")
+    print("Example 4")
     print("Results for simple customer")
     print("")
     print("Demand distribution for simple customer")
@@ -554,7 +556,7 @@ def example4(plot=True,save=False):
         print("Plotting the final stock distribution")
         q0 = foo["dmax"]
         qi = np.zeros(q0+1)
-        qi[*q0] = 1.
+        qi[tuple(q0)] = 1.
   
         plt.figure()
         plt.matshow(qi,origin="lower")
@@ -563,6 +565,7 @@ def example4(plot=True,save=False):
         plt.title("Initial stock distribution")
         if save:
             plt.savefig('fig1-0.png', bbox_inches='tight', dpi=300)
+            plt.savefig('fig1-0.pdf', bbox_inches='tight', dpi=300)
     
         qi,usc,lostsales = evolve_correlated(q0,customers)
         plt.figure()
@@ -572,6 +575,7 @@ def example4(plot=True,save=False):
         plt.title("Final stock distribution")
         if save:
             plt.savefig('fig1-1.png', bbox_inches='tight', dpi=300)
+            plt.savefig('fig1-1.pdf', bbox_inches='tight', dpi=300)
 
 def example5(plot=True,save=False):
     # Single item customer / independent case
@@ -615,6 +619,7 @@ def example5_plot(plot=True,save=False):
         plt.title("q0=%s" % q0)
         if save:
             plt.savefig('fig2-1.png', bbox_inches='tight', dpi=300)
+            plt.savefig('fig2-1.pdf', bbox_inches='tight', dpi=300)
         print("")
 
     # Let's try to optimize
@@ -635,6 +640,7 @@ def example5_plot(plot=True,save=False):
         plt.title("q0=%s" % qbest)
         if save:
             plt.savefig('fig2-2.png', bbox_inches='tight', dpi=300)
+            plt.savefig('fig2-2.pdf', bbox_inches='tight', dpi=300)
 
     print("")
     print("*** Theoretical solution for independent stocks ***")
@@ -651,6 +657,7 @@ def example5_plot(plot=True,save=False):
         plt.title("q0=%s" % qt)
         if save:
             plt.savefig('fig2-3.png', bbox_inches='tight', dpi=300)
+            plt.savefig('fig2-3.pdf', bbox_inches='tight', dpi=300)
 
     return qi
 
@@ -721,6 +728,7 @@ def example6_plot(save=False):
     plt.ylabel("Expectation")
     if save:
         plt.savefig('fig4x-1.png', bbox_inches='tight', dpi=300)
+        plt.savefig('fig4x-1.pdf', bbox_inches='tight', dpi=300)
     
     plt.figure()
     plt.title("Optimal stock levels")
@@ -730,6 +738,7 @@ def example6_plot(save=False):
     plt.ylabel("# Item 2")
     if save:
         plt.savefig('fig4x-2.png', bbox_inches='tight', dpi=300)
+        plt.savefig('fig4x-2.pdf', bbox_inches='tight', dpi=300)
 
     return rs, qs, value
 
@@ -819,6 +828,7 @@ def example6_search(dr=0.1,rtol=1e-8,r1=0.0,r2=1.0,save=False):
     plt.ylabel("Expectation")
     if save:
         plt.savefig('fig6x-1.png', bbox_inches='tight', dpi=300)
+        plt.savefig('fig6x-1.pdf', bbox_inches='tight', dpi=300)
     
     plt.figure()
     plt.title("Optimal stock levels")
@@ -832,6 +842,7 @@ def example6_search(dr=0.1,rtol=1e-8,r1=0.0,r2=1.0,save=False):
     plt.ylabel("# Item 2")
     if save:
         plt.savefig('fig6x-2.png', bbox_inches='tight', dpi=300)
+        plt.savefig('fig6x-2.pdf', bbox_inches='tight', dpi=300)
 
     return rs, qs, value
 
@@ -909,7 +920,7 @@ def animate(save=False):
 
     q0 = np.array([20,20])
     qi = np.zeros(q0+1)
-    qi[*q0] = 1.
+    qi[tuple(q0)] = 1.
     plt.figure()
     plt.matshow(qi,origin="lower")
     plt.set_cmap('jet')
@@ -944,13 +955,14 @@ def animate(save=False):
 # Choose an example to run 
 
 # animate()
-#qi = example4()
+#qi = example4(plot=True,save=True)
 #qi = example5()
-qi = example5_plot()
+qi = example5_plot(save=False)
 #qi = example6(alpha=1.0)  
 #qi = example6(alpha=0.5)  
 #rs, qs, value = example6_plot()
 #rs, qs, value = example6_search(dr=0.1,rtol=1e-8)
+#rs, qs, value = example6_search(dr=0.1,rtol=1e-8,save=True)
 #qi = example7()
 #qi = example8()
 #qi = example9()
