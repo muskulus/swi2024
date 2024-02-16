@@ -1,5 +1,5 @@
 # evolution.py - Probability density evolution 
-# ver 1.2 - 2024-02-15 - michael.muskulus@ntnu.no
+# ver 1.4 - 2024-02-15 - michael.muskulus@ntnu.no
 
 # CHANGELOG
 #
@@ -10,11 +10,14 @@
 # - Improved textual outputs slightly
 # - Increase portability by replacing unpacking with tuples
 # - Add plotting as PDFs in addition to PNGs
+#
+# 2024-02-16
+# - Add optimization for service level
+# - Fixed error in service level / lostsales computation
 
 import numpy as np
 import matplotlib.pyplot as plt
 import queue
-import matplotlib.animation as animation
 from scipy.stats import poisson, nbinom
 import scipy.stats.contingency as ssc
 
@@ -239,6 +242,10 @@ def evolve_correlated(q0,customers,maxcustomers=10000,minp=1e-8,mind=1e-12,verbo
             print("      q%s = %12.10f -- push %12.10f => q%s" % (q,qi[tuple(q)],p,q1), end='\n')
         # Update distribution of unsatisfied customers
         usc_[:] = usc_[:] + p * usc      # No change       
+        # service level computation
+        items = (q1 == 0).astype('int')*items  # only those that now reach zero stock
+        if np.sum(items) > 0:
+            loosesales(p,items)
     def leave(q,p,qi,qi_,usc,usc_):
         # No sale, with probability p
         qi_[tuple(q)] = qi_[tuple(q)] + p            # Probability for same stock level
@@ -248,8 +255,11 @@ def evolve_correlated(q0,customers,maxcustomers=10000,minp=1e-8,mind=1e-12,verbo
         usc_[1:] = usc_[1:] + p * usc[:-1]
     def loosesales(p,items):
         pmoved = p * notlostsales 
+        items = np.where(items > 0)
+        #print("      srvlevel ",notlostsales, "  items ",items, "  <== p = %12.10f" % p)
         lostsales[items]    = lostsales[items]    + pmoved[items]
         notlostsales[items] = notlostsales[items] - pmoved[items]
+        #print("               ",notlostsales, "  items ",items, "  <== p = %12.10f" % p)
     nx = len(q0)
     # Keep track of stock levels
     qi = np.zeros(q0+1)
@@ -324,7 +334,7 @@ def evolve_correlated(q0,customers,maxcustomers=10000,minp=1e-8,mind=1e-12,verbo
                                     print("    Primary      ",j," with p =",palt, " items = ",items)
                                 # Case 2b2: lost sale
                                 leave(q,palt,qi,qi_,usc,usc_)
-                                loosesales(palt,items)
+                                # loosesales(palt,items)
             qi = qi_
             usc = usc_
             # Check that we do not loose / create probability
@@ -386,9 +396,10 @@ def analyze(qi, usc, lostsales, q0, costs, prices, minp=1e-12, verbose=True):
         esvstd    = np.sqrt(esv2 - esv**2)        # E[X^2] - E[X]^2
         esalesstd = np.sqrt(esales2 - esales**2) 
         euscstd   = np.sqrt(eusc2 - eusc**2) 
+        srvlevel = 1-lostsales  # servicelevel
         print("Average sales                 : %3d +/- %4.2f" % (esales, esalesstd))
         print("Average unsatisfied customers : %3d +/- %4.2f" % (eusc, euscstd))
-        print("Lost sales prob. (per item)   :", lostsales) 
+        print("Service levels                :", srvlevel) 
         print("Average sales value           : %8.4f +/- %8.4f" % (esv, esvstd))
         print("Production cost               : %8.4f" % pcost)
         print("Expected revenue              : %8.4f +/- %8.4f" % (esv - pcost, esvstd))
@@ -445,17 +456,17 @@ def theoretical_q(customers, costs, prices, minp=1e-9, verbose=False):
 # Step-up stocks until no more improvement
 # Keep a queue of unexplored possibilities
 # Stop when no improvement can be reached anymore
-def optimize_full(q0,qmax,customers,costs,prices,depth=2,quiet=False,verbose=False):
+def optimize_full(q0,qmax,customers,costs,prices,depth=2,penalize_lost=False,level=0.99,penalize_item=None,penalty=10000,quiet=False,verbose=False):
     if not quiet:
         print("Fully enumerative optimization",end="")
     NOT_VISITED = -99999
-    def obj(q,penalize_lost=False,penalize_item=1,level=0.01,penalty=10000):        
+    def obj(q):        
         qi, usc, lostsales = evolve_correlated(q,customers)
         esv = analyze(qi,usc,lostsales,q,costs,prices,verbose=verbose)
         res = esv
         if penalize_lost:
-            if lostsales[1] > level:
-                res = res - penalty*(lostsales[penalize_item]-level) 
+            if lostsales[penalize_item] > 1-level:
+                res = res - penalty*(lostsales[penalize_item]-(1-level)) 
         return res
     def add(q,current):
         # check if we have been here before
@@ -514,7 +525,7 @@ def optimize_full(q0,qmax,customers,costs,prices,depth=2,quiet=False,verbose=Fal
 # Some example scenarios
 #
 
-def optimize_and_compare(customers,costs,prices):
+def optimize_and_compare(customers,costs,prices,penalize_lost=False,level=0.95,item=None):
     print("")
     print("*** Theoretical solution for independent stocks ***")
     qt = theoretical_q(customers,costs,prices)
@@ -524,7 +535,7 @@ def optimize_and_compare(customers,costs,prices):
     q0 = np.array([0,0])        # initial stock levels to consider
     qmax = np.array([100,100])  # max. stock levels to consider
     print("")
-    qbest = optimize_full(q0,qmax,customers,costs,prices)
+    qbest = optimize_full(q0,qmax,customers,costs,prices,penalize_lost=penalize_lost,level=level,penalize_item=item)
     qi, usc,lostsales = evolve_correlated(qbest,customers)
     print("")
     print("*** Optimal solution from search ***")
@@ -703,6 +714,7 @@ def example6_plot(save=False):
     
     # rs = np.linspace(0,1,11)
     rs = np.linspace(0,1,101)
+    rs = np.array([0.000,0.471,0.685,0.773,0.791,0.840,0.986])
     value = np.zeros_like(rs)
     qs = []
     for i, r in enumerate(rs):
@@ -718,7 +730,7 @@ def example6_plot(save=False):
         esv = analyze(qi, usc, lostsales, qbest,costs,prices,verbose=False)
         value[i] = esv
         qs.append(qbest)
-        print("  =>  q* =",qbest," value = %6.3f" % esv)
+        print("  =>  q* =",qbest," value = %6.3f" % esv, " srv = ",1-lostsales)
     
     plt.figure()
     plt.title("Optimal revenue")
@@ -814,6 +826,7 @@ def example6_search(dr=0.1,rtol=1e-8,r1=0.0,r2=1.0,save=False):
             rlast = r
             continue
         print("Change at r = %12.10f" % r,"  =>  q* =",q," value = %6.3f" % v)
+
         rs.append(r)
         value.append(v)
         qs.append(q)
@@ -910,6 +923,32 @@ def example9():
     qi = optimize_and_compare(customers,costs,prices)
     return qi
 
+
+def example10(item=0):
+    # Service level optimization
+    # Single item customer / independent case
+    # item: Which item to optimize the service level for
+    print("Example 10")
+    print("Results for simple customer with service level optimization")
+    costs  = np.array([6,10])
+    prices = np.array([10,13])
+    customers = []
+    rate = 20
+    fi = np.array([2/3, 1/3])
+    customers.append(customerSimple(rate,dNBinom(mu=rate),fi))
+    q0 = np.array([0,0])        # initial stock levels to consider
+    qmax = np.array([100,100])  # max. stock levels to consider    
+    lvl = [0.90,0.95,0.99, 1.00]
+    for level in lvl:
+        print("Target level = %6.4f for item %d  => " % (level,item),end="")
+        qbest = optimize_full(q0,qmax,customers,costs,prices,penalize_lost=True,level=level,penalize_item=item,quiet=True)
+        qi, usc,lostsales = evolve_correlated(qbest,customers)
+        esv = analyze(qi,usc,lostsales,qbest,costs,prices,verbose=False)        
+        level1 = 1-lostsales[item]
+        print("q =",qbest," beta = %8.6f" % level1,"r(q) = %10.8f" % esv, " lvls=",1-lostsales)
+    return qi
+
+
 def animate(save=False):
     print("Preparing plots for an animation")
     customers = []
@@ -966,6 +1005,6 @@ qi = example5_plot(save=False)
 #qi = example7()
 #qi = example8()
 #qi = example9()
-
+#qi = example10(item=0)
 
 
